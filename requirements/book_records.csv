@@ -1,0 +1,51 @@
+Book ID,Title,Author,Genre,Availability
+B001,Parallel Worlds,Gary Estrada,Science,Issued
+B002,Digital Fortress,Rodney French,History,Issued
+B003,Golden Horizon,Kenneth White,History,Available
+B004,Echoes of Tomorrow,Steven Torres,Technology,Issued
+B005,Parallel Worlds,Leah Keith,History,Available
+B006,Shadow Lines,Audrey Lopez,Romance,Issued
+B007,Machine Dreams,Jacob Sweeney,Science,Issued
+B008,Digital Fortress,David Fuller,Non-fiction,Issued
+B009,Echoes of Tomorrow,Lauren Sanchez,Mystery,Issued
+B010,Machine Dreams,Austin Wong,Science,Available
+B011,The Silent Moon,Jeanne Woods,Fiction,Available
+B012,Parallel Worlds,Michael Kim,Science,Issued
+B013,Machine Dreams,Audrey Perez,Mystery,Issued
+B014,Echoes of Tomorrow,Jimmy Turner,Science,Issued
+B015,The Silent Moon,John Santana,Fantasy,Available
+B016,Crimson Dawn,Patricia Foster,Fantasy,Issued
+B017,Machine Dreams,Melissa Porter,Romance,Issued
+B018,Machine Dreams,Joan Butler,Non-fiction,Issued
+B019,Golden Horizon,Keith Thompson,Fantasy,Issued
+B020,Golden Horizon,Samantha Burnett,Fantasy,Available
+B021,Deep Blue,Ashley Johnson,Fiction,Issued
+B022,Parallel Worlds,Jeffrey Johnson,Mystery,Available
+B023,The Silent Moon,Martin Hughes,Technology,Available
+B024,Echoes of Tomorrow,Anthony Arnold,Fiction,Issued
+B025,Parallel Worlds,Rachel May,History,Available
+B026,Winds of Winter,Kyle Graham,History,Issued
+B027,Golden Horizon,Patricia Ross,Romance,Issued
+B028,Deep Blue,Richard Garrett,Mystery,Issued
+B029,Deep Blue,Andrea Marshall,History,Issued
+B030,The Silent Moon,Pamela Cook,History,Available
+B031,Parallel Worlds,Michael Keller,Romance,Available
+B032,Machine Dreams,Cynthia Mcgrath,Non-fiction,Issued
+B033,Parallel Worlds,Richard Baker,Non-fiction,Available
+B034,Parallel Worlds,Dr. David Rogers,Fiction,Issued
+B035,Machine Dreams,Jon Perez,Mystery,Available
+B036,The Silent Moon,Robert Bush,Non-fiction,Available
+B037,Machine Dreams,Walter Gonzalez,Romance,Issued
+B038,The Silent Moon,Shannon Reynolds,Science,Available
+B039,Winds of Winter,Nathan Miller,Mystery,Available
+B040,Golden Horizon,Joshua Torres,Technology,Issued
+B041,Deep Blue,Tracie Hawkins,Fantasy,Available
+B042,Winds of Winter,Antonio Johnson,Science,Available
+B043,Echoes of Tomorrow,Lindsay Miller,History,Available
+B044,Machine Dreams,Mark Wagner,Fiction,Available
+B045,Winds of Winter,Alexis Reed,Non-fiction,Issued
+B046,Parallel Worlds,Monica Riley,Technology,Issued
+B047,Shadow Lines,Carlos Aguilar,Non-fiction,Issued
+B048,Digital Fortress,Tara Dyer,Science,Available
+B049,Parallel Worlds,Crystal Khan,Fiction,Available
+B050,Golden Horizon,Kathy Cook,Fantasy,Available
