@@ -1,8 +1,23 @@
 #!/usr/bin/env python3
 """
 part_b_retail_analysis.py
-- Usage:
+
+Utilities and analysis pipeline for Retail Transaction Insights (Part B).
+
+This module provides functions to:
+- Load and canonicalise a retail transactions CSV into a consistent DataFrame
+- Compute exploratory metrics and aggregated tables
+- Produce defensive visualisations and save them to disk
+- Export aggregate CSVs and a summary Excel workbook when possible
+
+The functions are written to be defensive against messy real-world datasets
+(e.g., inconsistent column names, malformed product lists, missing dates).
+
+Typical usage:
     python part_b_retail_analysis.py --csv requirements/Retail_Transactions_Dataset.csv --out retail_outputs
+
+The public entrypoint is `analyze(csv_path, out)` which orchestrates the full
+pipeline and returns a small summary dictionary.
 """
 from __future__ import annotations
 import argparse
@@ -48,7 +63,21 @@ def find_first_col(df: pd.DataFrame, candidates):
     """
     Find the first matching column name in the DataFrame from a list of candidate names.
 
-    Tries exact (case-insensitive) matches first, then substring matches.
+    This helper attempts two strategies in order:
+    1. Exact case-insensitive match of any candidate against existing column names.
+    2. Substring match after normalising underscores and spaces (useful for small
+       variations like "Transaction Id" vs "Transaction_ID").
+
+    Args:
+        df: DataFrame to inspect.
+        candidates: iterable of candidate column names (strings) to try.
+
+    Returns:
+        The actual column name found in `df.columns` or None if no candidate matches.
+
+    Example:
+        >>> find_first_col(df, ["Transaction_ID", "invoice_id"])
+        'Invoice'  # if df has a column named 'Invoice'
     """
     cols_lower = {c.lower(): c for c in df.columns}
     for cand in candidates:
@@ -63,7 +92,19 @@ def find_first_col(df: pd.DataFrame, candidates):
 
 
 def detect_columns(df: pd.DataFrame):
-    """Detect dataset columns using EXPECTED_COLS mapping."""
+    """
+    Produce a mapping from canonical keys to the actual DataFrame column names.
+
+    Uses the EXPECTED_COLS lookup to try many common alternatives for each canonical
+    key (e.g., 'date', 'total_cost', 'product').
+
+    Args:
+        df: DataFrame to inspect.
+
+    Returns:
+        Dict[str, Optional[str]] mapping canonical column keys to the detected
+        column name in `df` or None if no match was found.
+    """
     mapping = {}
     for key, candidates in EXPECTED_COLS.items():
         mapping[key] = find_first_col(df, candidates)
@@ -71,7 +112,18 @@ def detect_columns(df: pd.DataFrame):
 
 
 def safe_parse_dates(series: pd.Series) -> pd.Series:
-    """Robustly parse a pandas Series to datetimes."""
+    """
+    Robustly parse a pandas Series to datetime values.
+
+    Tries a default parsing, then a day-first fall-back. On failure returns a
+    Series of pandas.NaT values aligned with the original index.
+
+    Args:
+        series: Series containing date-like values (strings, timestamps, etc.).
+
+    Returns:
+        Series of dtype datetime64[ns] with invalid parsings coerced to NaT.
+    """
     try:
         return pd.to_datetime(series, errors="coerce")
     except Exception:
@@ -82,7 +134,15 @@ def safe_parse_dates(series: pd.Series) -> pd.Series:
 
 
 def month_to_season(month: int) -> str:
-    """Map numeric month (1-12) to season string."""
+    """
+    Map a numeric month (1-12) to a season label.
+
+    Args:
+        month: Integer month (1..12). Invalid or missing months return "Unknown".
+
+    Returns:
+        One of: "Winter", "Spring", "Summer", "Fall", or "Unknown".
+    """
     if month in (12, 1, 2):
         return "Winter"
     if month in (3, 4, 5):
@@ -96,15 +156,27 @@ def month_to_season(month: int) -> str:
 
 def explode_products(product_series: pd.Series) -> list:
     """
-    Flatten a series of product entries into a list of product names.
+    Flatten a Series containing product/item entries into a list of product names.
 
-    Handles:
-      - Proper CSV strings: "['A', 'B', 'C']"
-      - Unquoted lists: ['Spinach']
-      - Comma-separated values "A, B, C"
-      - Single-item strings
+    The dataset may represent products in many formats; this helper tries to
+    accommodate common variants:
+      - Python-style lists as strings: "['A', 'B']"
+      - Comma-separated values: "A, B, C"
+      - Single quoted strings like "'Spinach'"
+      - Bare product names
 
-    Uses ast.literal_eval when the value looks like a Python list; otherwise falls back to regex split.
+    Parsing strategy:
+      1. If the cell looks like a Python list (bracketed), attempt ast.literal_eval
+         and iterate items.
+      2. If the string contains commas, split on commas and strip quotes/whitespace.
+      3. Otherwise strip surrounding quotes and return the remaining text.
+
+    Args:
+        product_series: Series of raw product representations.
+
+    Returns:
+        List[str] of product names found across all rows (order is the order
+        encountered). Empty entries are ignored.
     """
     products = []
     list_like_re = re.compile(r"^\s*\[.*\]\s*$")
@@ -146,14 +218,39 @@ def explode_products(product_series: pd.Series) -> list:
 
 
 def ensure_numeric(df: pd.DataFrame, col: str) -> pd.DataFrame:
-    """Safely coerce a DataFrame column to numeric (in-place)."""
+    """
+    Safely coerce a DataFrame column to numeric in-place.
+
+    Non-convertible values will be set to NaN. If the column does not exist the
+    DataFrame is returned unchanged.
+
+    Args:
+        df: DataFrame to operate on.
+        col: Column name to coerce to numeric.
+
+    Returns:
+        The same DataFrame object (mutated) for convenience.
+    """
     if col in df.columns:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
 
 
 def try_save_excel(dfs: dict, out_path: Path) -> tuple:
-    """Try to write multiple DataFrames into a single Excel workbook."""
+    """
+    Attempt to write multiple DataFrames into an Excel workbook.
+
+    Uses pandas.ExcelWriter which requires openpyxl (or an appropriate engine)
+    to be available. On failure returns (False, error_message) so callers can
+    gracefully fall back to CSV exports.
+
+    Args:
+        dfs: Mapping from sheet name (str) to DataFrame.
+        out_path: Path to the target .xlsx file.
+
+    Returns:
+        Tuple[bool, Optional[str]]: (success_flag, error_message_or_None).
+    """
     try:
         with pd.ExcelWriter(out_path) as writer:
             for name, df in dfs.items():
@@ -164,7 +261,13 @@ def try_save_excel(dfs: dict, out_path: Path) -> tuple:
 
 
 def save_plot(fig, path: Path) -> None:
-    """Save a matplotlib figure to disk ensuring target directory exists."""
+    """
+    Save a matplotlib figure to disk ensuring the parent directory exists.
+
+    Args:
+        fig: matplotlib.figure.Figure instance.
+        path: Path to the PNG file to write.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
@@ -174,7 +277,15 @@ def save_plot(fig, path: Path) -> None:
 def annotate_bar_values(ax, fmt="{:.0f}", fontsize=8, va="bottom"):
     """
     Add numeric labels on top of bar containers in an Axes.
-    Works for both simple bar plots and bar charts produced from pandas.
+
+    This supports bars created by pandas/matplotlib bar plots. Bars with NaN
+    or extremely small heights are skipped.
+
+    Args:
+        ax: matplotlib Axes instance containing bar patches.
+        fmt: Format string for label values.
+        fontsize: Font size for label text.
+        va: Vertical alignment for the text relative to the bar top.
     """
     for p in ax.patches:
         try:
@@ -193,8 +304,13 @@ def annotate_bar_values(ax, fmt="{:.0f}", fontsize=8, va="bottom"):
 
 def annotate_stacked_totals(ax, df_pivot, fmt="{:.0f}", fontsize=8):
     """
-    For stacked bar charts (pivot table plotted), annotate total at top of each stacked bar.
-    df_pivot: DataFrame indexed by x, columns are stacks (values numeric)
+    Annotate total values for stacked bar charts plotted from a pivot table.
+
+    Args:
+        ax: matplotlib Axes where the stacked bars were plotted.
+        df_pivot: DataFrame used to plot the stacked bars (index=categories, cols=stacks).
+        fmt: Format string for the totals.
+        fontsize: Font size for the total labels.
     """
     totals = df_pivot.sum(axis=1)
     x_positions = np.arange(len(totals))
@@ -203,7 +319,16 @@ def annotate_stacked_totals(ax, df_pivot, fmt="{:.0f}", fontsize=8):
 
 
 def annotate_line_points(ax, x_vals, y_vals, fmt="{:.0f}", fontsize=8):
-    """Annotate line chart markers with numeric y-values."""
+    """
+    Annotate marker points on a line chart with their numeric y-values.
+
+    Args:
+        ax: matplotlib Axes instance.
+        x_vals: Iterable of x coordinates (can be datetimes or positions).
+        y_vals: Iterable of numeric y coordinates.
+        fmt: Format string for the annotations.
+        fontsize: Font size for the annotation text.
+    """
     for x, y in zip(x_vals, y_vals):
         try:
             if y is None or (isinstance(y, float) and math.isnan(y)):
@@ -214,7 +339,15 @@ def annotate_line_points(ax, x_vals, y_vals, fmt="{:.0f}", fontsize=8):
 
 
 def annotate_heatmap_cells(ax, data, fmt="{:.0f}", fontsize=8):
-    """Annotate seaborn heatmap cells with formatted values (data: DataFrame)."""
+    """
+    Annotate seaborn heatmap cells with formatted values.
+
+    Args:
+        ax: Axes containing the heatmap.
+        data: pandas DataFrame of the numeric values displayed in the heatmap.
+        fmt: Format string for numeric cells.
+        fontsize: Font size of annotations.
+    """
     # data assumed to be numeric DataFrame
     for (i, j), val in np.ndenumerate(data.values):
         try:
@@ -230,11 +363,24 @@ def annotate_heatmap_cells(ax, data, fmt="{:.0f}", fontsize=8):
 # -------------------- Load & Clean -------------------- #
 def load_and_clean(csv_path: str) -> pd.DataFrame:
     """
-    Load the CSV dataset and perform cleaning & canonicalization.
+    Load the CSV dataset and perform cleaning & canonicalisation.
 
-    Ensures canonical columns:
-      Customer_ID, Total_Cost, Total_Items, City, Payment_Method, Store_Type,
-      Discount_Applied, Promotion, Customer_Category, Product_Raw, Year, Month, Season, etc.
+    This function attempts to detect columns with flexible names, parse dates,
+    coerce numeric fields, and generate canonical columns used across the
+    analysis pipeline (e.g., "Total_Cost", "Customer_ID", "Product_Raw",
+    "Season", "Year", "Month"). It is defensive to tolerate many common
+    dataset formatting issues.
+
+    Args:
+        csv_path: Path to the CSV file to load.
+
+    Returns:
+        A cleaned pandas DataFrame with additional canonical columns.
+
+    Notes:
+        - The function will drop exact full-row duplicates to avoid double-counting
+          in aggregates and visualisations.
+        - Columns that cannot be found are filled with sensible defaults where possible.
     """
     df = pd.read_csv(csv_path, low_memory=False)
     col_map = detect_columns(df)
@@ -311,10 +457,22 @@ def load_and_clean(csv_path: str) -> pd.DataFrame:
 # -------------------- Metrics & Analyses -------------------- #
 def exploratory_metrics(df: pd.DataFrame) -> dict:
     """
-    Compute basic exploratory metrics.
+    Compute lightweight exploratory metrics used for quick reporting and plotting.
 
-    Returns a dict with:
-      - total_tx, unique_customers, top_products, tx_by_city, rev_by_city
+    This function keeps memory usage small and returns a compact dictionary of
+    commonly useful aggregates such as transaction counts, unique customers,
+    top products (by occurrence), transactions by city and revenue by city.
+
+    Args:
+        df: Cleaned DataFrame (typically the output of `load_and_clean`).
+
+    Returns:
+        Dictionary with keys:
+          - total_tx: int total number of transactions (rows)
+          - unique_customers: int unique Customer_ID count
+          - top_products: list of (product, count) tuples (top 10)
+          - tx_by_city: DataFrame with columns [City, Transactions]
+          - rev_by_city: DataFrame with columns [City, Total_Cost]
     """
     total_tx = len(df)
     unique_customers = int(df["Customer_ID"].nunique(dropna=True))
@@ -350,9 +508,19 @@ def exploratory_metrics(df: pd.DataFrame) -> dict:
 
 def customer_behavior(df: pd.DataFrame) -> dict:
     """
-    Analyze customer behaviour.
+    Produce customer-centric aggregates useful for segmentation & preference analysis.
 
-    Returns avg_spend_cat, payment_pref (crosstab), avg_items_store.
+    Returns a small set of DataFrames suitable for plotting and CSV export:
+      - avg_spend_cat: average Total_Cost per Customer_Category (DataFrame)
+      - payment_pref: crosstab (Customer_Category x Payment_Method) counts (DataFrame)
+      - avg_items_store: average Total_Items per Store_Type (DataFrame)
+
+    Args:
+        df: Cleaned DataFrame.
+
+    Returns:
+        Dict[str, Optional[pd.DataFrame]] containing the above keys. Values may be
+        None when the required input columns are missing.
     """
     avg_spend_cat = None
     if "Customer_Category" in df.columns and df["Customer_Category"].notna().any():
@@ -375,7 +543,17 @@ def customer_behavior(df: pd.DataFrame) -> dict:
 
 def promotion_analysis(df: pd.DataFrame) -> dict:
     """
-    Analyze promotion and discount impact.
+    Analyse promotions and discounts to provide quick summary statistics.
+
+    Produces:
+      - discount_summary: grouped averages/counts for transactions with/without discount
+      - promotion_summary: average Total_Cost and counts per Promotion label
+
+    Args:
+        df: Cleaned DataFrame.
+
+    Returns:
+        Dict[str, pd.DataFrame] where keys are any available summaries.
     """
     results = {}
     if "Discount_Applied" in df.columns:
@@ -397,7 +575,18 @@ def promotion_analysis(df: pd.DataFrame) -> dict:
 
 def seasonality_analysis(df: pd.DataFrame) -> dict:
     """
-    Compute seasonality metrics.
+    Compute season-level aggregates and most popular products per season.
+
+    Produces:
+      - rev_by_season: total revenue per Season
+      - avg_by_season: average transaction Total_Cost per Season
+      - pop_by_season: mapping Season -> list of (product, count) tuples (top 5)
+
+    Args:
+        df: Cleaned DataFrame that contains a "Season" column.
+
+    Returns:
+        Dict with keys described above. Missing data results in empty DataFrames or empty dicts.
     """
     rev_by_season = df.groupby("Season", dropna=False)["Total_Cost"].sum().reset_index().sort_values("Total_Cost", ascending=False)
     avg_by_season = df.groupby("Season", dropna=False)["Total_Cost"].mean().reset_index().sort_values("Total_Cost", ascending=False)
@@ -416,7 +605,23 @@ def seasonality_analysis(df: pd.DataFrame) -> dict:
 # -------------------- Visualisations (defensive) -------------------- #
 def create_visualisations(df: pd.DataFrame, metrics: dict, behavior: dict, promo: dict, season: dict, out_dir: Path) -> list:
     """
-    Create and save required visualisations to out_dir/plots.
+    Create and persist a set of visualisations to disk based on the computed aggregates.
+
+    This function is defensive: each plotting block is wrapped in try/except to avoid
+    failing the whole pipeline if a particular chart cannot be produced due to
+    missing or malformed data. The produced plot filenames follow a numbered
+    prefix convention so they can be ordered easily in reports (e.g., 01_..., 02_...).
+
+    Args:
+        df: The cleaned DataFrame.
+        metrics: Output of `exploratory_metrics`.
+        behavior: Output of `customer_behavior`.
+        promo: Output of `promotion_analysis`.
+        season: Output of `seasonality_analysis`.
+        out_dir: Base directory where `plots/` will be created and files saved.
+
+    Returns:
+        List[Path] of saved plot file paths.
     """
     plots = []
     plots_dir = out_dir / "plots"
@@ -819,7 +1024,20 @@ def create_visualisations(df: pd.DataFrame, metrics: dict, behavior: dict, promo
 # -------------------- Aggregates Save -------------------- #
 def save_aggregates(out_dir: Path, metrics: dict, behavior: dict, promo: dict, season: dict, df: pd.DataFrame) -> tuple:
     """
-    Save aggregate CSVs and attempt to write an Excel workbook.
+    Persist aggregate CSVs and attempt to write an Excel workbook with key tables.
+
+    The function writes several CSV files under out_dir/aggregates/ and then
+    calls `try_save_excel` to combine a subset into an Excel workbook. Any
+    individual write failures are ignored so the overall pipeline remains robust.
+
+    Args:
+        out_dir: Base output directory where `aggregates/` will be created.
+        metrics, behavior, promo, season: dictionaries produced by earlier steps.
+        df: the cleaned DataFrame (used for some pivots/exports).
+
+    Returns:
+        Tuple[bool, Optional[str]] indicating whether the Excel write succeeded
+        and an error string when it failed (None on success).
     """
     agg_dir = out_dir / "aggregates"
     agg_dir.mkdir(parents=True, exist_ok=True)
@@ -903,7 +1121,23 @@ def save_aggregates(out_dir: Path, metrics: dict, behavior: dict, promo: dict, s
 # -------------------- Orchestrator -------------------- #
 def analyze(csv_path: str, out: str = "retail_outputs") -> dict:
     """
-    Full analysis orchestration.
+    High-level orchestration that runs the full analysis pipeline.
+
+    This function performs the following steps in order:
+      1. Load and clean the dataset
+      2. Compute exploratory metrics
+      3. Analyse customer behaviour and promotions
+      4. Compute seasonality summaries
+      5. Create visualisations and save aggregates to disk
+      6. Print a concise summary and recommended actions
+
+    Args:
+        csv_path: Path to the input CSV file.
+        out: Output directory to save plots and aggregates.
+
+    Returns:
+        Small summary dictionary with keys: total_transactions, unique_customers,
+        top_city, top_season, top_products.
     """
     out_dir = Path(out)
     out_dir.mkdir(parents=True, exist_ok=True)
