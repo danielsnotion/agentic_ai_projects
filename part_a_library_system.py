@@ -18,6 +18,7 @@ DEFAULT_LOAN_DAYS = 14
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("LibrarySystem")
 
+
 class LibrarySystem:
     """
     LibrarySystem manages books, members and borrow/return logs in-memory backed by CSV files.
@@ -26,6 +27,7 @@ class LibrarySystem:
     query inventory and generate simple reports. Instances keep in-memory pandas
     DataFrames and a derived borrowed-map for quick lookups.
     """
+
     def __init__(self,
                  books_csv: str = "book_records.csv",
                  members_csv: str = "member_records.csv",
@@ -54,8 +56,8 @@ class LibrarySystem:
         self.loan_days = int(loan_days)
 
         # DataFrames will be used as primary in-memory data structures
-        self.books_df = pd.DataFrame()       # columns expected: Book ID, Title, Author, Genre, Availability (Available/Issued)
-        self.members_df = pd.DataFrame()     # columns expected: Member ID, Name, Age, Contact Info
+        self.books_df = pd.DataFrame()  # columns expected: Book ID, Title, Author, Genre, Availability (Available/Issued)
+        self.members_df = pd.DataFrame()  # columns expected: Member ID, Name, Age, Contact Info
         self.borrow_log_df = pd.DataFrame(columns=["timestamp", "member_id", "book_id", "action", "due_date"])
 
         self._load_books()
@@ -80,7 +82,8 @@ class LibrarySystem:
         self.books_df = pd.read_csv(self.books_csv, dtype=str).fillna("")
         # Normalize Availability into boolean column 'available' for easier operations
         self.books_df["Availability"] = self.books_df["Availability"].astype(str)
-        self.books_df["available"] = self.books_df["Availability"].str.lower().isin(["available", "true", "1", "yes", "y"])
+        self.books_df["available"] = self.books_df["Availability"].str.lower().isin(
+            ["available", "true", "1", "yes", "y"])
         logger.info("Loaded %d books", len(self.books_df))
 
     def _load_members(self) -> None:
@@ -214,6 +217,26 @@ class LibrarySystem:
                     lst.remove(book_id)
         # store as attribute for quick reference
         self._borrowed_map = borrowed_map
+        # Reconcile per-book availability based on the computed borrowed_map.
+        # Any book present in borrowed_map values is marked unavailable (False); do not
+        # clobber existing availability flags loaded from CSV when a borrow-log entry
+        # is not present. That preserves 'Issued' states that came from the CSV.
+        try:
+            # Ensure column exists; if missing, assume available True by default
+            if "available" not in self.books_df.columns:
+                self.books_df["available"] = True
+            else:
+                # fill any missing values with True (do not overwrite existing booleans)
+                self.books_df["available"] = self.books_df["available"].fillna(True)
+
+            # mark borrowed ones as False
+            borrowed_ids = {bid for bids in borrowed_map.values() for bid in bids}
+            if borrowed_ids:
+                mask = self.books_df["Book ID"].isin(list(borrowed_ids))
+                self.books_df.loc[mask, "available"] = False
+        except Exception:
+            # best-effort: do not raise if something unexpected in DataFrame
+            pass
 
     def _ensure_book_exists(self, book_id: str) -> bool:
         """
@@ -241,12 +264,14 @@ class LibrarySystem:
         if self._ensure_book_exists(book_id):
             logger.debug("Attempt to add existing book: %s", book_id)
             return False
-        new_row = {"Book ID": book_id, "Title": title, "Author": author, "Genre": genre, "Availability": "Available" if availability else "Issued", "available": availability}
+        new_row = {"Book ID": book_id, "Title": title, "Author": author, "Genre": genre,
+                   "Availability": "Available" if availability else "Issued", "available": availability}
         self.books_df = pd.concat([self.books_df, pd.DataFrame([new_row])], ignore_index=True)
         logger.info("Added book %s", book_id)
         return True
 
-    def register_member(self, member_id: str, name: str, age: Optional[int] = None, contact: Optional[str] = None) -> bool:
+    def register_member(self, member_id: str, name: str, age: Optional[int] = None,
+                        contact: Optional[str] = None) -> bool:
         """
         Register a new library member.
 
@@ -255,7 +280,8 @@ class LibrarySystem:
         if self._ensure_member_exists(member_id):
             logger.debug("Attempt to register existing member: %s", member_id)
             return False
-        new_row = {"Member ID": member_id, "Name": name, "Age": age if age is not None else "", "Contact Info": contact or ""}
+        new_row = {"Member ID": member_id, "Name": name, "Age": age if age is not None else "",
+                   "Contact Info": contact or ""}
         self.members_df = pd.concat([self.members_df, pd.DataFrame([new_row])], ignore_index=True)
         logger.info("Registered member %s", member_id)
         return True
@@ -288,18 +314,19 @@ class LibrarySystem:
         # check availability
         book_row = self.books_df.loc[self.books_df["Book ID"] == book_id]
         if not bool(book_row.iloc[0]["available"]):
-            return False, f"Book '{book_row.iloc[0]['Title']}' ({book_id}) is currently issued."
+            return False, f"Book '{book_row.iloc[0]['Title']}' ({book_id}) is already issued."
 
         # update book availability
         self.books_df.loc[self.books_df["Book ID"] == book_id, "available"] = False
 
         # compute due_date
-        now = datetime.datetime.utcnow()
+        now = datetime.datetime.now(datetime.timezone.utc)
         ld = int(loan_days) if (loan_days is not None) else self.loan_days
         due_date = (now + datetime.timedelta(days=ld)).date().isoformat()
 
         # append borrow log row
-        new_log = {"timestamp": now.isoformat(), "member_id": member_id, "book_id": book_id, "action": "borrow", "due_date": due_date}
+        new_log = {"timestamp": now.isoformat(), "member_id": member_id, "book_id": book_id, "action": "borrow",
+                   "due_date": due_date}
         self.borrow_log_df = pd.concat([self.borrow_log_df, pd.DataFrame([new_log])], ignore_index=True)
 
         # recompute borrowed map
@@ -329,8 +356,9 @@ class LibrarySystem:
         self.books_df.loc[self.books_df["Book ID"] == book_id, "available"] = True
 
         # append return log row
-        now = datetime.datetime.utcnow()
-        new_log = {"timestamp": now.isoformat(), "member_id": member_id, "book_id": book_id, "action": "return", "due_date": ""}
+        now = datetime.datetime.now(datetime.timezone.utc)
+        new_log = {"timestamp": now.isoformat(), "member_id": member_id, "book_id": book_id, "action": "return",
+                   "due_date": ""}
         self.borrow_log_df = pd.concat([self.borrow_log_df, pd.DataFrame([new_log])], ignore_index=True)
 
         # recompute borrowed map
@@ -364,7 +392,8 @@ class LibrarySystem:
         g = (genre or "").strip()
         if g == "":
             return []
-        mask = (self.books_df["available"] == True) & (self.books_df["Genre"].astype(str).str.strip().str.lower() == g.lower())
+        mask = (self.books_df["available"] == True) & (
+                    self.books_df["Genre"].astype(str).str.strip().str.lower() == g.lower())
         res = self.books_df.loc[mask]
         return res.to_dict(orient="records")
 
@@ -374,9 +403,9 @@ class LibrarySystem:
 
         Each entry contains the member ID, name (if available) and the list of borrowed book IDs.
         """
-        # Defensive: ensure the borrowed map exists and is up-to-date
-        if not hasattr(self, "_borrowed_map") or not isinstance(self._borrowed_map, dict):
-            self._recompute_current_borrowed_map()
+        # Recompute the borrowed map from the borrow log to ensure up-to-date results
+        # This avoids stale state if borrow_log_df has changed or prior operations didn't refresh.
+        self._recompute_current_borrowed_map()
 
         members_list = []
         for member_id, borrowed in self._borrowed_map.items():
@@ -461,6 +490,7 @@ class LibrarySystem:
             })
         return pd.DataFrame(rows)
 
+
 # ---------------- CLI (keeps same behaviour) ----------------
 def input_prompt(prompt: str) -> str:
     """
@@ -474,6 +504,7 @@ def input_prompt(prompt: str) -> str:
         print()
         return ""
 
+
 def print_menu():
     """
     Print the simple interactive CLI menu to stdout.
@@ -483,14 +514,15 @@ def print_menu():
     print("\n--- City Library Management (CLI) ---")
     print("1. List all books (sample)")
     print("2. Search book by title/author")
-    print("3. Show available books by genre")
-    print("4. Register member")
-    print("5. Add book")
-    print("6. Borrow book")
-    print("7. Return book")
-    print("8. Show members with borrowed books")
-    print("9. Show most popular genre")
-    print("10. Save state")
+    print("3. Show only available books")
+    print("4. Show available books by genre")
+    print("5. Register member")
+    print("6. Add book")
+    print("7. Borrow book")
+    print("8. Return book")
+    print("9. Show members with borrowed books")
+    print("10. Show most popular genre")
+    print("11. Save state")
     print("0. Exit")
 
 
@@ -502,29 +534,37 @@ def cli_loop(lib: LibrarySystem):
     """
     while True:
         print_menu()
-        choice = input_prompt("Choose (0-10): ")
+        choice = input_prompt("Choose (0-11): ")
         if choice == "0":
-            print("Exiting. You may save changes (option 10) before leaving.")
+            print("Exiting. You may save changes (option 11) before leaving.")
             break
         elif choice == "1":
             print(f"\nTotal books: {len(lib.books_df)}")
             df = lib.books_df.copy()
             # show first 50 rows
             for _, b in df.head(50).iterrows():
-                print(f"{b['Book ID']}: {b['Title']} | {b['Author']} | {b['Genre']} | {'Available' if b['available'] else 'Issued'}")
+                print(
+                    f"{b['Book ID']}: {b['Title']} | {b['Author']} | {b['Genre']} | {'Available' if b['available'] else 'Issued'}")
         elif choice == "2":
             q = input_prompt("Search query: ")
             res = lib.search_books(q)
             print(f"Found {len(res)} result(s):")
             for b in res:
-                print(f"{b['Book ID']}: {b['Title']} | {b['Author']} | {'Available' if b.get('available', False) else 'Issued'}")
+                print(
+                    f"{b['Book ID']}: {b['Title']} | {b['Author']} | {'Available' if b.get('available', False) else 'Issued'}")
         elif choice == "3":
+            # Show only available books
+            available = lib.books_df[lib.books_df.get('available', False) == True]
+            print(f"Available books ({len(available)}):")
+            for _, b in available.iterrows():
+                print(f"{b['Book ID']}: {b['Title']} by {b.get('Author', '')}")
+        elif choice == "4":
             g = input_prompt("Genre: ")
             res = lib.available_books_by_genre(g)
             print(f"Available books in '{g}' ({len(res)}):")
             for b in res:
                 print(f"{b['Book ID']}: {b['Title']} by {b['Author']}")
-        elif choice == "4":
+        elif choice == "5":
             mid = input_prompt("Member ID: ")
             name = input_prompt("Name: ")
             age_raw = input_prompt("Age (optional): ")
@@ -532,34 +572,46 @@ def cli_loop(lib: LibrarySystem):
             contact = input_prompt("Contact Info: ")
             ok = lib.register_member(mid, name, age, contact)
             print("Registered." if ok else "Failed (ID may exist).")
-        elif choice == "5":
+        elif choice == "6":
             bid = input_prompt("Book ID: ")
             title = input_prompt("Title: ")
             author = input_prompt("Author: ")
             genre = input_prompt("Genre: ")
             ok = lib.add_book(bid, title, author, genre, availability=True)
             print("Added." if ok else "Failed (ID may exist).")
-        elif choice == "6":
+        elif choice == "7":
             mid = input_prompt("Member ID: ")
             bid = input_prompt("Book ID: ")
             loan_days_raw = input_prompt(f"Loan days (default {lib.loan_days}) or press Enter: ")
             loan_days = int(loan_days_raw) if loan_days_raw.strip().isdigit() else None
             ok, msg = lib.borrow_book(mid, bid, loan_days)
             print(msg)
-        elif choice == "7":
+        elif choice == "9":
+            # Show members with borrowed books (numeric 9 or 'm' alias)
+            # Recompute and show short diagnostics to help surface any state mismatch
+            lib._recompute_current_borrowed_map()
+            try:
+                tail = lib.borrow_log_df.tail(10)
+                if not tail.empty:
+                    print("\nRecent borrow-log entries:")
+                    print(tail.to_string(index=False))
+            except Exception:
+                pass
+            print("\nInternal borrowed map:", getattr(lib, '_borrowed_map', {}))
+            members = lib.members_with_borrowed_books()
+            print(f"\nMembers with borrowed books: {len(members)}")
+            for m in members:
+                print(f"{m['Member ID']}: {m['Name']} -> {m['BorrowedBooks']}")
+        elif choice == "8":
+            # Return book (numeric 8 or 'r' alias)
             mid = input_prompt("Member ID: ")
             bid = input_prompt("Book ID: ")
             ok, msg = lib.return_book(mid, bid)
             print(msg)
-        elif choice == "8":
-            members = lib.members_with_borrowed_books()
-            print(f"Members with borrowed books: {len(members)}")
-            for m in members:
-                print(f"{m['Member ID']}: {m['Name']} -> {m['BorrowedBooks']}")
-        elif choice == "9":
+        elif choice == "10":
             pop = lib.most_popular_genre()
             print("Most popular genre:", pop or "N/A")
-        elif choice == "10":
+        elif choice == "11":
             lib.save_state()
             print("Saved state to CSVs.")
         else:
@@ -580,6 +632,7 @@ def demo_run():
         lib.save_state()
         print("Saved.")
     print("Goodbye.")
+
 
 if __name__ == "__main__":
     demo_run()
